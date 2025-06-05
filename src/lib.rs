@@ -1,11 +1,13 @@
 pub mod backend_api;
+pub mod access_token_authenticator;
+
+use serde::{Deserialize, Serialize};
 //
 // use tower::Layer;
 // use axum::extract::Request;
 // use axum::http::StatusCode;
 // use axum::middleware::Next;
 // use axum::response::Response;
-// use serde::{Deserialize, Serialize};
 //
 // #[derive(Clone)]
 // pub struct Auth {
@@ -67,50 +69,49 @@ pub mod backend_api;
 //     claims: AccessTokenClaims,
 // }
 //
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct AccessTokenClaims {
-//     pub iss: String,
-//     pub sub: String,
-//     pub aud: String,
-//     pub exp: i64,
-//     pub nbf: i64,
-//     pub iat: i64,
-//     pub actions: Option<Vec<String>>,
-//     pub organization: AccessTokenOrganization,
-//     pub user: AccessTokenUser,
-//     pub session: AccessTokenSession,
-//     pub impersonator: Option<AccessTokenImpersonator>,
-// }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccessTokenClaims {
+    pub iss: String,
+    pub sub: String,
+    pub aud: String,
+    pub exp: i64,
+    pub nbf: i64,
+    pub iat: i64,
+    pub actions: Option<Vec<String>>,
+    pub organization: AccessTokenOrganization,
+    pub user: AccessTokenUser,
+    pub session: AccessTokenSession,
+    pub impersonator: Option<AccessTokenImpersonator>,
+}
 //
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct AccessTokenSession {
-//     pub id: String,
-// }
-//
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct AccessTokenOrganization {
-//     pub id: String,
-//     #[serde(rename = "displayName")]
-//     pub display_name: String,
-// }
-//
-// // You'll need to define this according to the actual structure
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct AccessTokenUser {
-//     // Example fields — replace with actual ones
-//     pub id: String,
-//     pub email: String,
-//     #[serde(rename = "displayName")]
-//     pub display_name: String,
-//     #[serde(rename = "profilePictureUrl")]
-//     pub profile_picture_url: String,
-// }
-//
-//
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct AccessTokenImpersonator {
-//     pub email: String,
-// }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccessTokenSession {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccessTokenOrganization {
+    pub id: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccessTokenUser {
+    // Example fields — replace with actual ones
+    pub id: String,
+    pub email: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "profilePictureUrl")]
+    pub profile_picture_url: String,
+}
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AccessTokenImpersonator {
+    pub email: String,
+}
 //
 // #[derive(Clone, Debug)]
 // struct ApiKeyData {
