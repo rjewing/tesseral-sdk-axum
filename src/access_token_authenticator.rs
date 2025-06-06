@@ -121,7 +121,7 @@ impl Authenticator {
             }
         }
 
-        // Need to (re)fetch, acquire write lock
+        // Need to (re)fetch, check again with write lock
         {
             let mut next_refresh = self.jwks_next_refresh.write().unwrap();
 
@@ -130,22 +130,29 @@ impl Authenticator {
                 return Ok(());
             }
 
-            // Fetch new config
-            let config = self.fetch_config().await?;
+            // Set next refresh time to far in the future to prevent other threads from
+            // also trying to refresh while we're fetching
+            *next_refresh = SystemTime::now() + Duration::from_secs(24 * 60 * 60); // 24 hours
+        } // Release the lock before the await point
 
-            // Update project ID
-            {
-                let mut project_id = self.project_id.write().unwrap();
-                *project_id = config.project_id;
-            }
+        // Fetch new config without holding any locks
+        let config = self.fetch_config().await?;
 
-            // Update JWKS
-            {
-                let mut jwks = self.jwks.write().unwrap();
-                *jwks = config.keys;
-            }
+        // Update project ID
+        {
+            let mut project_id = self.project_id.write().unwrap();
+            *project_id = config.project_id;
+        }
 
-            // Update next refresh time
+        // Update JWKS
+        {
+            let mut jwks = self.jwks.write().unwrap();
+            *jwks = config.keys;
+        }
+
+        // Update next refresh time with the actual interval
+        {
+            let mut next_refresh = self.jwks_next_refresh.write().unwrap();
             *next_refresh = SystemTime::now() + self.options.jwks_refresh_interval;
         }
 
@@ -290,7 +297,7 @@ fn authenticate_access_token(
         return Err(AuthenticatorError::InvalidAccessToken);
     }
 
-    
+
     // Print claims as UTF-8 string
     println!("Claims: {}", String::from_utf8_lossy(&claims_bytes));
 

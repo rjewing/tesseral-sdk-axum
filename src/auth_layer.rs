@@ -2,10 +2,13 @@ use std::future::Future;
 use std::task::Poll;
 use std::pin::Pin;
 use axum::extract::Request;
+use axum::http::StatusCode;
 use axum::middleware::{from_fn, FromFnLayer};
 use axum::response::Response;
+use axum::body::Body;
 use tower::{Layer, Service};
 use crate::access_token_authenticator::Authenticator;
+use crate::auth::Auth;
 use crate::backend_api;
 
 /// A marker struct to indicate that API key authentication was successful.
@@ -92,16 +95,33 @@ where
     }
 
     fn call(&mut self, mut request: Request) -> Self::Future {
-        let access_token_authenticator = self.access_token_authenticator.clone();
-        let api_keys_enabled = self.api_keys_enabled;
-        let backend_api_client = self.backend_api_client.clone();
+        // Clone what we need to avoid Send issues
+        let authenticator = self.access_token_authenticator.clone();
         let mut inner = self.inner.clone();
 
-        // Due to the complexity of the authenticator implementation and potential issues with Send,
-        // we'll implement a simplified version for now that just passes the request through.
-        // In a real implementation, you would need to handle the Send issues properly.
         Box::pin(async move {
-            // For now, just pass the request through
+            // Try to get the project_id, return 500 if it fails
+            let project_id = match authenticator.project_id().await {
+                Ok(id) => id,
+                Err(_) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::empty())
+                        .unwrap())
+                }
+            };
+
+            // Try to extract credentials, return 401 if none found
+            let credentials = match extract_credentials(&project_id, &request) {
+                Some(creds) => creds,
+                None => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::UNAUTHORIZED)
+                        .body(Body::empty())
+                        .unwrap())
+                }
+            };
+
             inner.call(request).await
         })
     }
