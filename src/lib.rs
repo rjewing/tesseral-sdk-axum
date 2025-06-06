@@ -102,9 +102,9 @@ pub struct AccessTokenUser {
     pub id: String,
     pub email: String,
     #[serde(rename = "displayName")]
-    pub display_name: String,
+    pub display_name: Option<String>,
     #[serde(rename = "profilePictureUrl")]
-    pub profile_picture_url: String,
+    pub profile_picture_url: Option<String>,
 }
 
 

@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use aws_lc_rs::signature::{UnparsedPublicKey, ECDSA_P256_SHA256_FIXED};
+use base64::{engine::general_purpose::{URL_SAFE_NO_PAD, URL_SAFE_NO_PAD as BASE64}, Engine as _};
 use reqwest::Client;
 use serde::Deserialize;
 use thiserror::Error;
@@ -14,12 +15,8 @@ use crate::AccessTokenClaims;
 pub enum AuthenticatorError {
     #[error("invalid access token")]
     InvalidAccessToken,
-    #[error("failed to fetch config: {0}")]
-    FetchConfigError(#[from] reqwest::Error),
-    #[error("failed to parse config: {0}")]
-    ParseConfigError(String),
-    #[error("crypto error: {0}")]
-    CryptoError(String),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 /// Options for configuring the Authenticator
@@ -162,24 +159,25 @@ impl Authenticator {
             self.options.config_api_hostname, self.options.publishable_key
         );
 
-        let response = self.options.http_client.get(&url).send().await?;
+        let response = self.options.http_client.get(&url).send().await
+            .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("HTTP request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(AuthenticatorError::ParseConfigError(
-                format!("Bad response status code: {}", response.status())
-            ));
+            return Err(AuthenticatorError::Other(anyhow::anyhow!(
+                "Bad response status code: {}", response.status()
+            )));
         }
 
-        let body = response.bytes().await?;
-        parse_config(&body).map_err(|e| AuthenticatorError::ParseConfigError(e.to_string()))
+        let body = response.bytes().await
+            .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("Failed to get response body: {}", e)))?;
+        parse_config(&body).map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("{}", e)))
     }
 }
 
-/// Simple representation of a public key for ECDSA verification
+/// Wrapper around UnparsedPublicKey for ECDSA verification
 #[derive(Clone)]
 struct PublicKey {
-    x: Vec<u8>,
-    y: Vec<u8>,
+    key: UnparsedPublicKey<Vec<u8>>,
 }
 
 /// Config data returned from the API
@@ -209,25 +207,32 @@ struct ConfigResponse {
 /// Parse the config response into a ConfigData struct
 fn parse_config(bytes: &[u8]) -> Result<ConfigData, AuthenticatorError> {
     let config_response: ConfigResponse = serde_json::from_slice(bytes)
-        .map_err(|e| AuthenticatorError::ParseConfigError(format!("Failed to parse config response: {}", e)))?;
+        .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("Failed to parse config response: {}", e)))?;
 
     let mut keys = HashMap::new();
 
     for key in config_response.keys {
         if key.kty != "EC" || key.crv != "P-256" {
-            return Err(AuthenticatorError::ParseConfigError(
-                format!("Unsupported key type/curve: {}/{}", key.kty, key.crv)
-            ));
+            return Err(AuthenticatorError::Other(anyhow::anyhow!(
+                "Unsupported key type/curve: {}/{}", key.kty, key.crv
+            )));
         }
 
         // Decode x and y coordinates
-        let x_bytes = URL_SAFE_NO_PAD.decode(&key.x)
-            .map_err(|e| AuthenticatorError::ParseConfigError(format!("Failed to decode x coordinate: {}", e)))?;
+        let x_bytes = BASE64.decode(&key.x)
+            .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("Failed to decode x coordinate: {}", e)))?;
 
-        let y_bytes = URL_SAFE_NO_PAD.decode(&key.y)
-            .map_err(|e| AuthenticatorError::ParseConfigError(format!("Failed to decode y coordinate: {}", e)))?;
+        let y_bytes = BASE64.decode(&key.y)
+            .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("Failed to decode y coordinate: {}", e)))?;
 
-        keys.insert(key.kid, PublicKey { x: x_bytes, y: y_bytes });
+        // Concatenate x and y bytes into a single vec
+        let mut public_key_bytes = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
+        public_key_bytes.push(0x04);
+        public_key_bytes.extend_from_slice(&x_bytes);
+        public_key_bytes.extend_from_slice(&y_bytes);
+
+        let public_key = UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, public_key_bytes);
+        keys.insert(key.kid, PublicKey { key: public_key });
     }
 
     Ok(ConfigData {
@@ -280,22 +285,18 @@ fn authenticate_access_token(
     }
 
     // Verify the signature using aws-lc-rs
-    // This is a simplified approach - in a real implementation, you would use the proper
-    // aws-lc-rs API for ECDSA verification with P-256 curve
-    let verified = verify_ecdsa_p256(
-        &public_key.x,
-        &public_key.y,
-        &signature_bytes,
-        signed_part.as_bytes(),
-    ).map_err(|e| AuthenticatorError::CryptoError(e))?;
-
-    if !verified {
+    let result = public_key.key.verify(signed_part.as_bytes(), &signature_bytes);
+    if let Err(_) = result {
         return Err(AuthenticatorError::InvalidAccessToken);
     }
 
+    
+    // Print claims as UTF-8 string
+    println!("Claims: {}", String::from_utf8_lossy(&claims_bytes));
+
     // Parse the claims
     let claims: AccessTokenClaims = serde_json::from_slice(&claims_bytes)
-        .map_err(|_| AuthenticatorError::InvalidAccessToken)?;
+        .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("Failed to parse claims: {}", e)))?;
 
     // Check token expiration
     let now = SystemTime::now()
@@ -310,28 +311,14 @@ fn authenticate_access_token(
     Ok(claims)
 }
 
-/// Verify an ECDSA P-256 signature
-fn verify_ecdsa_p256(
-    x: &[u8],
-    y: &[u8],
-    signature: &[u8],
-    message: &[u8],
-) -> Result<bool, String> {
-    // In a real implementation, we would use aws-lc-rs to verify the signature
-    // For now, we'll just return true to avoid compilation errors
-    // This should be replaced with actual verification logic using aws-lc-rs
 
-    // The Go code uses ECDSA with P-256 curve and SHA-256 hash
-    // In aws-lc-rs, we would:
-    // 1. Create a P-256 public key from x and y coordinates
-    // 2. Create a SHA-256 hash of the message
-    // 3. Verify the signature using the public key and hash
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // For now, we'll just return true
-    Ok(true)
-}
-
-/// Make the Authenticator public
-pub fn new_authenticator(publishable_key: String) -> Authenticator {
-    Authenticator::new(publishable_key)
+    #[tokio::test]
+    async fn test_smoke_authenticator() {
+        let authenticator = AuthenticatorBuilder::new("publishable_key_en43cawcravxk7t2murwiz192".to_string()).build();
+        dbg!(authenticator.authenticate_access_token("eyJraWQiOiJzZXNzaW9uX3NpZ25pbmdfa2V5X2FmYmxudmhyeG80OHQ5czVtZjcwdWE0OW0iLCJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJodHRwczovL3Byb2plY3QtZXIyanloMmdvb2l1cXZieHh4dG80NXgxei50ZXNzZXJhbC5hcHAiLCJzdWIiOiJ1c2VyXzN4bGlmZmc3N2dtZTNyM29hbGY4MzM5OXIiLCJhdWQiOiJodHRwczovL3Byb2plY3QtZXIyanloMmdvb2l1cXZieHh4dG80NXgxei50ZXNzZXJhbC5hcHAiLCJleHAiOjE3NDkyNDIwODksIm5iZiI6MTc0OTI0MTc4OSwiaWF0IjoxNzQ5MjQxNzg5LCJzZXNzaW9uIjp7ImlkIjoic2Vzc2lvbl8wM2UyZGY3dGJjcGJ0bDZjeTFudGMyYmIwIn0sInVzZXIiOnsiaWQiOiJ1c2VyXzN4bGlmZmc3N2dtZTNyM29hbGY4MzM5OXIiLCJlbWFpbCI6InVseXNzZS5jYXJpb25Ac3NvcmVhZHkuY29tIn0sIm9yZ2FuaXphdGlvbiI6eyJpZCI6Im9yZ180aWptaTgxMmd0b3JheDltcm5qeTF4ZDB1IiwiZGlzcGxheU5hbWUiOiJGb29CYXIifX0.Bmeu2EqRZ-hzC3rKrEOdTIzf9SJKsEgATR1TmHU9HPlOSXKtZGkOB5k7Zz6I0-3Kx920bdIagUXhnJ6MO6zX3Q").await);
+    }
 }
