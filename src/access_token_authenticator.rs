@@ -8,7 +8,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::AccessTokenClaims;
+use crate::access_token_claims::AccessTokenClaims;
 
 /// Error types for the access token authenticator
 #[derive(Error, Debug)]
