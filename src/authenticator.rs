@@ -1,20 +1,28 @@
+use crate::auth::{AccessTokenClaims, AccessTokenData, Auth, AuthData};
+use aws_lc_rs::signature::UnparsedPublicKey;
+use aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED;
 use axum::body::Body;
 use axum::extract::Request;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use base64::Engine;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::time::Duration;
+use reqwest::header::HeaderMap;
 use thiserror::Error;
-use crate::auth::Auth;
+use tokio::time::Instant;
 
 pub struct Authenticator {
     publishable_key: String,
+    config_refresh_interval: Duration,
+    config: Option<Config>,
+    http_client: reqwest::Client,
 }
 
-impl Authenticator {
-    pub fn new(publishable_key: String) -> Self {
-        Self { publishable_key }
-    }
-
-    pub(crate) fn authenticate_request(&mut self, request: Request<Body>) -> Result<Auth, AuthenticateError> {
-
-    }
+struct Config {
+    project_id: String,
+    keys: HashMap<String, UnparsedPublicKey<Vec<u8>>>,
+    next_refresh: Instant,
 }
 
 #[derive(Debug, Error)]
@@ -23,4 +31,129 @@ pub enum AuthenticateError {
     Unauthorized,
     #[error("Internal error: {0}")]
     Other(#[from] anyhow::Error),
+}
+
+impl Authenticator {
+    pub fn new(publishable_key: String) -> Self {
+        Self {
+            publishable_key,
+            config_refresh_interval: Duration::from_secs(60 * 60),
+            config: None,
+            http_client: reqwest::Client::new(),
+        }
+    }
+
+    pub(crate) async fn authenticate_request(
+        &mut self,
+        request_headers: &HeaderMap,
+    ) -> Result<Auth, AuthenticateError> {
+        self.fetch_config().await?;
+
+        let project_id = &self.config.as_ref().unwrap().project_id;
+        let keys = &self.config.as_ref().unwrap().keys;
+
+        let credentials = Self::extract_credentials(&request_headers, project_id)
+            .ok_or(AuthenticateError::Unauthorized)?;
+
+        let access_token_claims = authenticate_access_token(keys, Instant::now(), &credentials)
+            .ok_or(AuthenticateError::Unauthorized)?;
+
+        Ok(Auth {
+            data: AuthData::AccessToken(AccessTokenData {
+                access_token: credentials,
+                access_token_claims,
+            }),
+        })
+    }
+
+    fn extract_credentials(request_headers: &HeaderMap, project_id: &str) -> Option<String> {
+        if let Some(authorization) = request_headers.get("Authorization") {
+            if let Ok(authorization) = authorization.to_str() {
+                return match authorization.strip_prefix("Bearer ") {
+                    Some(s) => Some(s.to_owned()),
+                    None => Some(authorization.to_owned()),
+                };
+            }
+        }
+
+        let cookie_name = format!("tesseral_{}_access_token", project_id);
+        for cookie in request_headers.get_all("Cookie") {
+            if let Ok(cookie) = cookie.to_str() {
+                if let Some(credentials) = cookie.strip_prefix(&cookie_name) {
+                    return Some(credentials.to_owned());
+                }
+            }
+        }
+
+        None
+    }
+
+    async fn fetch_config(&mut self) -> Result<(), anyhow::Error> {
+        if let Some(ref config) = self.config {
+            if config.next_refresh > Instant::now() {
+                return Ok(());
+            }
+        }
+
+        #[derive(Deserialize)]
+        struct ConfigResponse {
+            project_id: String,
+            jwks: Vec<Jwk>,
+        }
+
+        #[derive(Deserialize)]
+        struct Jwk {
+            kid: String,
+            kty: String,
+            crv: String,
+            x: String,
+            y: String,
+        }
+
+        let config_response: ConfigResponse = self
+            .http_client
+            .get(format!(
+                "https://config.tesseral.com/v1/config/{}",
+                self.publishable_key
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        let mut keys = HashMap::new();
+        for jwk in config_response.jwks {
+            if jwk.kty != "EC" || jwk.crv != "P-256" {
+                anyhow::bail!("Unsupported key type/curve: {}/{}", jwk.kty, jwk.crv);
+            }
+
+            let x = BASE64_URL_SAFE_NO_PAD.decode(jwk.x)?;
+            let y = BASE64_URL_SAFE_NO_PAD.decode(jwk.y)?;
+            let mut buf = Vec::with_capacity(1 + x.len() + y.len());
+            buf.push(0x04);
+            buf.extend(&x);
+            buf.extend(&y);
+
+            keys.insert(
+                jwk.kid,
+                UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, buf),
+            );
+        }
+
+        self.config = Some(Config {
+            next_refresh: Instant::now() + self.config_refresh_interval,
+            project_id: config_response.project_id,
+            keys,
+        });
+        Ok(())
+    }
+}
+
+fn authenticate_access_token(
+    keys: &HashMap<String, UnparsedPublicKey<Vec<u8>>>,
+    now: Instant,
+    access_token: &str,
+) -> Option<AccessTokenClaims> {
+    None
 }

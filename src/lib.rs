@@ -1,23 +1,24 @@
-use crate::authenticator::Authenticator;
+use crate::authenticator::{AuthenticateError, Authenticator};
 use axum::{body::Body, extract::Request, response::Response};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use tokio::sync::Mutex;
 use tower::{Layer, Service};
 
-pub mod authenticator;
 mod auth;
+pub mod authenticator;
 
 pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {
     RequireAuthLayer {
-        authenticator: Arc::new(authenticator),
+        authenticator: Arc::new(Mutex::new(authenticator)),
     }
 }
 
 #[derive(Clone)]
 pub struct RequireAuthLayer {
-    authenticator: Arc<Authenticator>,
+    authenticator: Arc<Mutex<Authenticator>>,
 }
 
 impl<S> Layer<S> for RequireAuthLayer {
@@ -33,7 +34,7 @@ impl<S> Layer<S> for RequireAuthLayer {
 
 #[derive(Clone)]
 pub struct RequireAuth<S> {
-    authenticator: Arc<Authenticator>,
+    authenticator: Arc<Mutex<Authenticator>>,
     inner: S,
 }
 
@@ -52,10 +53,22 @@ where
     }
 
     fn call(&mut self, mut request: Request<Body>) -> Self::Future {
-        let future = self.inner.call(request);
+        let authenticator = self.authenticator.clone();
+        let request_headers = request.headers().clone();
+        let request = Arc::new(request);
+
         Box::pin(async move {
-            let response: Response = future.await?;
-            Ok(response)
+            match authenticator.lock().await.authenticate_request(&request_headers).await {
+                Ok(auth) => {
+                    return self.inner.call(request).await;
+                }
+                Err(AuthenticateError::Unauthorized) => {
+                    return Ok(Response::builder().status(401).body(Body::empty()).unwrap());
+                }
+                Err(AuthenticateError::Other(e)) =>  {
+                    return Ok(Response::builder().status(500).body(Body::from(e.to_string())).unwrap());
+                },
+            }
         })
     }
 }
