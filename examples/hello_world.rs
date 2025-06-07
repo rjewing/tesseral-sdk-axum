@@ -11,7 +11,7 @@ async fn main() {
     // Build our application with a single route
     let app = Router::new()
         .route("/", get(handler))
-        .layer(axum::middleware::from_fn(require_auth(authenticator)));
+        .layer(require_auth(authenticator));
 
     // Run the server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
