@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
 pub mod authenticator;
+mod auth;
 
 pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {
     RequireAuthLayer {
