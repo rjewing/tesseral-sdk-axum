@@ -1,22 +1,20 @@
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
-fn jwt_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$").unwrap())
-}
+static JWT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$").unwrap()
+});
 
-fn api_key_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"^[a-z0-9_]+$").unwrap())
-}
+static API_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[a-z0-9_]+$").unwrap()
+});
 
 pub fn is_jwt_format(s: &str) -> bool {
-    jwt_regex().is_match(s)
+    JWT_REGEX.is_match(s)
 }
 
 pub fn is_api_key_format(s: &str) -> bool {
-    api_key_regex().is_match(s)
+    API_KEY_REGEX.is_match(s)
 }
 
 

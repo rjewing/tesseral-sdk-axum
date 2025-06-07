@@ -29,7 +29,6 @@ pub struct AccessTokenOrganization {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessTokenUser {
-    // Example fields — replace with actual ones
     pub id: String,
     pub email: String,
     #[serde(rename = "displayName")]

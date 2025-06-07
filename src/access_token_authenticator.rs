@@ -297,10 +297,6 @@ fn authenticate_access_token(
         return Err(AuthenticatorError::InvalidAccessToken);
     }
 
-
-    // Print claims as UTF-8 string
-    println!("Claims: {}", String::from_utf8_lossy(&claims_bytes));
-
     // Parse the claims
     let claims: AccessTokenClaims = serde_json::from_slice(&claims_bytes)
         .map_err(|e| AuthenticatorError::Other(anyhow::anyhow!("Failed to parse claims: {}", e)))?;
