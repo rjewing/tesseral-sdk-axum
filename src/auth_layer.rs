@@ -8,12 +8,8 @@ use axum::response::Response;
 use axum::body::Body;
 use tower::{Layer, Service};
 use crate::access_token_authenticator::Authenticator;
-use crate::auth::Auth;
-use crate::backend_api;
-
-/// A marker struct to indicate that API key authentication was successful.
-#[derive(Clone, Debug)]
-pub struct ApiKeyAuthenticated(pub bool);
+use crate::auth::{AccessTokenData, ApiKeyData, Auth, AuthData};
+use crate::{backend_api, is_api_key_format, is_jwt_format};
 
 pub struct RequireAuthBuilder {
     access_token_authenticator: Authenticator,
@@ -54,6 +50,7 @@ impl RequireAuthBuilder {
 }
 
 /// A layer that requires authentication for all requests.
+#[derive(Clone)]
 pub struct RequireAuthLayer {
     access_token_authenticator: Authenticator,
     api_keys_enabled: bool,
@@ -74,6 +71,7 @@ impl<S> Layer<S> for RequireAuthLayer {
 }
 
 /// A service that requires authentication for all requests.
+#[derive(Clone)]
 pub struct RequireAuthService<S> {
     inner: S,
     access_token_authenticator: Authenticator,
@@ -83,12 +81,12 @@ pub struct RequireAuthService<S> {
 
 impl<S> Service<Request> for RequireAuthService<S>
 where
-    S: Service<Request, Response = Response> + Clone + Send + 'static,
+    S: Service<Request, Response=Response> + Clone + Send + 'static,
     S::Future: Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = Pin<Box<dyn Future<Output=Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -97,6 +95,8 @@ where
     fn call(&mut self, mut request: Request) -> Self::Future {
         // Clone what we need to avoid Send issues
         let authenticator = self.access_token_authenticator.clone();
+        let backend_api_client = self.backend_api_client.clone();
+        let api_keys_enabled = self.api_keys_enabled;
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
@@ -122,6 +122,57 @@ where
                 }
             };
 
+            let auth = if is_jwt_format(credentials) {
+                let access_token_claims = match authenticator.authenticate_access_token(credentials).await {
+                    Ok(claims) => claims,
+                    Err(_) => {
+                        return Ok(Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::empty())
+                            .unwrap())
+                    }
+                };
+
+                Auth {
+                    data: AuthData::AccessToken(AccessTokenData {
+                        access_token_claims,
+                        access_token: credentials.to_owned(),
+                    })
+                }
+            } else if api_keys_enabled && is_api_key_format(credentials) {
+                let authenticate_api_key_response = match backend_api_client.authenticate_api_key(backend_api::AuthenticateApiKeyRequest {
+                    secret_token: Some(credentials.to_owned()),
+                }).await {
+                    Ok(response) => response,
+                    Err(e) => {
+                        if e.status() == Some(StatusCode::BAD_REQUEST) {
+                            return Ok(Response::builder()
+                                .status(StatusCode::UNAUTHORIZED)
+                                .body(Body::empty())
+                                .unwrap())
+                        }
+
+                        return Ok(Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::empty())
+                            .unwrap())
+                    }
+                };
+
+                Auth {
+                    data: AuthData::ApiKey(ApiKeyData {
+                        authenticate_api_key_response,
+                        api_key_secret_token: credentials.to_owned(),
+                    })
+                }
+            } else {
+                return Ok(Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(Body::empty())
+                    .unwrap())
+            };
+
+            request.extensions_mut().insert(auth);
             inner.call(request).await
         })
     }

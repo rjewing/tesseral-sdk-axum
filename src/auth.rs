@@ -1,8 +1,9 @@
 use crate::access_token_claims::AccessTokenClaims;
 use crate::backend_api::AuthenticateApiKeyResponse;
 
+#[derive(Clone)]
 pub struct Auth {
-    data: AuthData,
+    pub(crate) data: AuthData,
 }
 
 impl Auth {
@@ -51,17 +52,20 @@ impl Auth {
     }
 }
 
-enum AuthData {
+#[derive(Clone)]
+pub(crate) enum AuthData {
     AccessToken(AccessTokenData),
     ApiKey(ApiKeyData),
 }
 
-struct AccessTokenData {
-    access_token: String,
-    access_token_claims: AccessTokenClaims,
+#[derive(Clone)]
+pub(crate) struct AccessTokenData {
+    pub(crate) access_token: String,
+    pub(crate) access_token_claims: AccessTokenClaims,
 }
 
-struct ApiKeyData {
-    api_key_secret_token: String,
-    authenticate_api_key_response: AuthenticateApiKeyResponse,
+#[derive(Clone)]
+pub(crate) struct ApiKeyData {
+    pub(crate) api_key_secret_token: String,
+    pub(crate) authenticate_api_key_response: AuthenticateApiKeyResponse,
 }

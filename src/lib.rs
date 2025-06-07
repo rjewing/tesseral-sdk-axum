@@ -1,9 +1,9 @@
 pub mod backend_api;
 pub mod access_token_authenticator;
 mod access_token_claims;
-mod auth_layer;
+pub mod auth_layer;
 mod credentials;
-mod auth;
+pub mod auth;
 
 pub use credentials::{is_jwt_format, is_api_key_format};
 

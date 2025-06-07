@@ -14,7 +14,7 @@ pub struct AuthenticateApiKeyRequest {
 }
 
 /// Response from authenticating an API key.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthenticateApiKeyResponse {
     #[serde(rename = "apiKeyId", skip_serializing_if = "Option::is_none")]
     pub api_key_id: Option<String>,
