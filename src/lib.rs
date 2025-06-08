@@ -40,7 +40,7 @@ pub struct RequireAuth<S> {
 
 impl<S> Service<Request<Body>> for RequireAuth<S>
 where
-    S: Service<Request<Body>, Response = Response> + Send + 'static,
+    S: Service<Request<Body>, Response = Response> + Send + Clone + 'static,
     S::Future: Send + 'static,
 {
     type Response = S::Response;
@@ -55,19 +55,31 @@ where
     fn call(&mut self, mut request: Request<Body>) -> Self::Future {
         let authenticator = self.authenticator.clone();
         let request_headers = request.headers().clone();
-        let request = Arc::new(request);
+        // Clone the inner service to avoid lifetime issues
+        let mut inner = self.inner.clone();
 
         Box::pin(async move {
-            match authenticator.lock().await.authenticate_request(&request_headers).await {
+            match authenticator
+                .lock()
+                .await
+                .authenticate_request(&request_headers)
+                .await
+            {
                 Ok(auth) => {
-                    return self.inner.call(request).await;
+                    // Add the auth object to request extensions
+                    request.extensions_mut().insert(auth);
+                    inner.call(request).await
                 }
                 Err(AuthenticateError::Unauthorized) => {
-                    return Ok(Response::builder().status(401).body(Body::empty()).unwrap());
+                    Ok(Response::builder().status(401).body(Body::empty()).unwrap())
                 }
-                Err(AuthenticateError::Other(e)) =>  {
-                    return Ok(Response::builder().status(500).body(Body::from(e.to_string())).unwrap());
-                },
+                Err(AuthenticateError::Other(e)) => Ok(Response::builder()
+                    .status(500)
+                    .body(Body::from(format!(
+                        "Internal server error in tesseral_axum: {:#}",
+                        e
+                    )))
+                    .unwrap()),
             }
         })
     }

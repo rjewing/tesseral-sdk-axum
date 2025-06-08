@@ -8,6 +8,7 @@ use base64::Engine;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
+use anyhow::Context;
 use reqwest::header::HeaderMap;
 use thiserror::Error;
 use tokio::time::Instant;
@@ -47,17 +48,18 @@ impl Authenticator {
         &mut self,
         request_headers: &HeaderMap,
     ) -> Result<Auth, AuthenticateError> {
-        self.fetch_config().await?;
+        self.fetch_config().await.context("Failed to fetch config")?;
 
         let project_id = &self.config.as_ref().unwrap().project_id;
         let keys = &self.config.as_ref().unwrap().keys;
 
+        dbg!(project_id, keys);
         let credentials = Self::extract_credentials(&request_headers, project_id)
             .ok_or(AuthenticateError::Unauthorized)?;
-
+        dbg!(&credentials);
         let access_token_claims = authenticate_access_token(keys, Instant::now(), &credentials)
             .ok_or(AuthenticateError::Unauthorized)?;
-
+        dbg!(&access_token_claims);
         Ok(Auth {
             data: AuthData::AccessToken(AccessTokenData {
                 access_token: credentials,
@@ -97,8 +99,9 @@ impl Authenticator {
 
         #[derive(Deserialize)]
         struct ConfigResponse {
+            #[serde(rename = "projectId")]
             project_id: String,
-            jwks: Vec<Jwk>,
+            keys: Vec<Jwk>,
         }
 
         #[derive(Deserialize)]
@@ -123,7 +126,7 @@ impl Authenticator {
             .await?;
 
         let mut keys = HashMap::new();
-        for jwk in config_response.jwks {
+        for jwk in config_response.keys {
             if jwk.kty != "EC" || jwk.crv != "P-256" {
                 anyhow::bail!("Unsupported key type/curve: {}/{}", jwk.kty, jwk.crv);
             }
@@ -155,5 +158,51 @@ fn authenticate_access_token(
     now: Instant,
     access_token: &str,
 ) -> Option<AccessTokenClaims> {
-    None
+    // Split the JWT token into its three parts: header, payload, signature
+    let parts: Vec<&str> = access_token.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let header_b64 = parts[0];
+    let payload_b64 = parts[1];
+    let signature_b64 = parts[2];
+
+    // Decode the header
+    let header_bytes = BASE64_URL_SAFE_NO_PAD.decode(header_b64).ok()?;
+    let header: serde_json::Value = serde_json::from_slice(&header_bytes).ok()?;
+
+    // Extract the key ID (kid) from the header
+    let kid = header["kid"].as_str()?;
+
+    // Find the corresponding public key
+    let public_key = keys.get(kid)?;
+
+    // Prepare the data to be verified (header.payload)
+    let signed_data = format!("{}.{}", header_b64, payload_b64);
+
+    // Decode the signature
+    let signature = BASE64_URL_SAFE_NO_PAD.decode(signature_b64).ok()?;
+
+    // Verify the signature
+    if public_key.verify(signed_data.as_bytes(), &signature).is_err() {
+        return None;
+    }
+
+    // Decode and parse the payload
+    let payload_bytes = BASE64_URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    let claims: AccessTokenClaims = serde_json::from_slice(&payload_bytes).ok()?;
+
+    // Check if the token is expired
+    // Convert the current time to seconds since UNIX epoch
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+
+    if claims.exp < current_time || claims.nbf > current_time {
+        return None;
+    }
+
+    Some(claims)
 }
