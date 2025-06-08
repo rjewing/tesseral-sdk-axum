@@ -1,4 +1,3 @@
-use crate::authenticator::{AuthenticateError, Authenticator};
 use axum::{body::Body, extract::Request, response::Response};
 use std::future::Future;
 use std::pin::Pin;
@@ -7,10 +6,32 @@ use std::task::{Context, Poll};
 use tokio::sync::Mutex;
 use tower::{Layer, Service};
 
-pub mod auth;
-pub mod authenticator;
+// Re-export only the necessary items
+pub use crate::auth::Auth;
+pub use crate::authenticator::{AuthenticateError, Authenticator};
+
+// Keep modules private except for the re-exported items
+mod auth;
+mod authenticator;
 mod credentials;
 
+/// Creates a middleware layer that requires authentication for all requests.
+///
+/// This function takes an Authenticator instance and returns a middleware layer
+/// that can be added to an Axum Router. The middleware will authenticate all
+/// incoming requests and reject unauthorized requests with a 401 status code.
+///
+/// # Example
+///
+/// ```
+/// let authenticator = Authenticator::new("publishable_key")
+///     .with_api_keys_enabled(true)
+///     .with_backend_api_key("backend_api_key");
+///
+/// let app = Router::new()
+///     .route("/", get(handler))
+///     .layer(require_auth(authenticator));
+/// ```
 pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {
     authenticator.validate_backend_api_key();
     RequireAuthLayer {
@@ -18,6 +39,10 @@ pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {
     }
 }
 
+/// A middleware layer that requires authentication for all requests.
+///
+/// This layer is created by the [`require_auth`] function and can be added to an Axum Router
+/// to authenticate all incoming requests.
 #[derive(Clone)]
 pub struct RequireAuthLayer {
     authenticator: Arc<Mutex<Authenticator>>,
@@ -34,6 +59,11 @@ impl<S> Layer<S> for RequireAuthLayer {
     }
 }
 
+/// A middleware service that requires authentication for all requests.
+///
+/// This service is created by the [`require_auth`] function (via
+/// [`RequireAuthLayer`]) and is responsible for authenticating requests and
+/// adding the [`Auth`] object to request extensions. 
 #[derive(Clone)]
 pub struct RequireAuth<S> {
     authenticator: Arc<Mutex<Authenticator>>,

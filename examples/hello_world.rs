@@ -1,8 +1,6 @@
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
-use tesseral_axum::auth::Auth;
-use tesseral_axum::authenticator::Authenticator;
-use tesseral_axum::require_auth;
+use tesseral_axum::{require_auth, Auth, Authenticator};
 use tokio::net::TcpListener;
 
 #[tokio::main]

@@ -4,6 +4,21 @@ use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 
+/// Represents an authenticated user or API key.
+///
+/// This struct is extracted from request extensions and provides methods to access
+/// authentication information such as organization ID, access token claims, credentials,
+/// and permissions.
+///
+/// # Example
+///
+/// ```
+/// async fn handler(auth: Auth) -> String {
+///     let org_id = auth.organization_id();
+///     let has_permission = auth.has_permission("foo.bar.baz");
+///     // ...
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Auth {
     pub(crate) data: AuthData,
@@ -23,6 +38,9 @@ where
 }
 
 impl Auth {
+    /// Returns the organization ID of the authenticated user or API key.
+    ///
+    /// This method works for both access token and API key authentication.
     pub fn organization_id(&self) -> &str {
         match self.data {
             AuthData::AccessToken(ref data) => &data.access_token_claims.organization.id,
@@ -34,6 +52,9 @@ impl Auth {
         }
     }
 
+    /// Returns the access token claims if the authentication was done with an access token.
+    ///
+    /// Returns `None` if the authentication was done with an API key.
     pub fn access_token_claims(&self) -> Option<&AccessTokenClaims> {
         match self.data {
             AuthData::AccessToken(ref data) => Some(&data.access_token_claims),
@@ -41,6 +62,9 @@ impl Auth {
         }
     }
 
+    /// Returns the credentials used for authentication.
+    ///
+    /// This will be either the access token or the API key secret token.
     pub fn credentials(&self) -> &str {
         match self.data {
             AuthData::AccessToken(ref data) => &data.access_token,
@@ -48,6 +72,15 @@ impl Auth {
         }
     }
 
+    /// Checks if the authenticated user or API key has the specified permission.
+    ///
+    /// # Arguments
+    ///
+    /// * `action` - The permission to check for, e.g., "foo.bar.baz"
+    ///
+    /// # Returns
+    ///
+    /// `true` if the user or API key has the specified permission, `false` otherwise.
     pub fn has_permission(&self, action: &str) -> bool {
         match self.data {
             AuthData::AccessToken(ref data) => data
