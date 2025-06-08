@@ -1,3 +1,25 @@
+//! Tesseral SDK for [`axum`].
+//!
+//! Typically, you will construct an [`Authenticator`], and then add
+//! [`require_auth`] to your router. From there, you can extract the [`Auth`]
+//! object from the request extensions.
+//!
+//! ```
+//! use axum::{Router, routing::get};
+//! use tesseral_axum::{Auth, Authenticator, require_auth};
+//!
+//! let authenticator = Authenticator::new("publishable_key_...".into());
+//!
+//! let app = Router::new()
+//!     .route("/", get(handler))
+//!     .layer(require_auth(authenticator));
+//!
+//! async fn handler(auth: Auth) -> String {
+//!     format!("You work for {}", auth.organization_id())
+//! }
+//! ```
+//!
+//! Documentation: https://tesseral.com/docs/sdks/serverside-sdks/tesseral-sdk-axum
 use axum::{body::Body, extract::Request, response::Response};
 use std::future::Future;
 use std::pin::Pin;
@@ -11,33 +33,17 @@ mod authenticator;
 mod credentials;
 
 // Re-export only the necessary items
-pub use crate::auth::Auth;
+pub use crate::auth::{Auth, CredentialsType};
 pub use crate::authenticator::Authenticator;
-use crate::authenticator::AuthenticateError;
 
 /// Middleware layer that requires requests be authenticated.
 ///
 /// Unauthenticated requests receive a 401 Unauthenticated error.
 ///
 /// Authenticated requests carry authentication data, which you can extract by
-/// having your handler expect an instance of [`Auth`].
-///
-/// # Example
-///
-/// ```
-/// use axum::{Router, routing::get};
-/// use tesseral_axum::{Auth, Authenticator, require_auth};
-///
-/// let authenticator = Authenticator::new("publishable_key_...".into());
-///
-/// let app = Router::new()
-///     .route("/", get(handler))
-///     .layer(require_auth(authenticator));
-///
-/// async fn handler(auth: Auth) -> String {
-///     format!("You work for {}", auth.organization_id())
-/// }
-/// ```
+/// having your handler expect an instance of [`Auth`]. Requests will be
+/// required to be authenticated even if you do not extract an [`Auth`]
+/// instance in your handler.
 pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {
     authenticator.validate_backend_api_key();
     RequireAuthLayer {
@@ -108,10 +114,10 @@ where
                     request.extensions_mut().insert(auth);
                     inner.call(request).await
                 }
-                Err(AuthenticateError::Unauthorized) => {
+                Err(authenticator::AuthenticateError::Unauthorized) => {
                     Ok(Response::builder().status(401).body(Body::empty()).unwrap())
                 }
-                Err(AuthenticateError::Other(e)) => Ok(Response::builder()
+                Err(authenticator::AuthenticateError::Other(e)) => Ok(Response::builder()
                     .status(500)
                     .body(Body::from(format!(
                         "Internal server error in tesseral_axum: {:#}",

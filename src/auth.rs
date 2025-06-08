@@ -84,6 +84,7 @@ impl Auth {
 }
 
 /// Returned from [`Auth::credentials_type`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialsType {
     /// The request was authenticated with an access token.
     AccessToken,
