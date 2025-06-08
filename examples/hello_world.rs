@@ -1,13 +1,14 @@
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
+use tesseral_axum::auth::Auth;
 use tesseral_axum::authenticator::Authenticator;
 use tesseral_axum::require_auth;
 use tokio::net::TcpListener;
-use tesseral_axum::auth::Auth;
 
 #[tokio::main]
 async fn main() {
-    let authenticator = Authenticator::new("publishable_key_en43cawcravxk7t2murwiz192".to_string());
+    let authenticator = Authenticator::new("publishable_key_en43cawcravxk7t2murwiz192".to_string())
+        .with_config_api_hostname("config.tesseral.com".to_string());
 
     // Build our application with a single route
     let app = Router::new()

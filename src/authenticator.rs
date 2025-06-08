@@ -13,6 +13,7 @@ use tokio::time::Instant;
 
 pub struct Authenticator {
     publishable_key: String,
+    config_api_hostname: String,
     config_refresh_interval: Duration,
     config: Option<Config>,
     http_client: reqwest::Client,
@@ -36,10 +37,21 @@ impl Authenticator {
     pub fn new(publishable_key: String) -> Self {
         Self {
             publishable_key,
+            config_api_hostname: "config.tesseral.com".to_owned(),
             config_refresh_interval: Duration::from_secs(60 * 60),
             config: None,
             http_client: reqwest::Client::new(),
         }
+    }
+
+    pub fn with_config_api_hostname(mut self, config_api_hostname: String) -> Self {
+        self.config_api_hostname = config_api_hostname;
+        self
+    }
+
+    pub fn with_config_refresh_interval(mut self, config_refresh_interval: Duration) -> Self {
+        self.config_refresh_interval = config_refresh_interval;
+        self
     }
 
     pub(crate) async fn authenticate_request(
