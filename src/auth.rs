@@ -1,8 +1,25 @@
+use axum::extract::{FromRequest, FromRequestParts};
+use axum::http::request::Parts;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 
 #[derive(Clone)]
 pub struct Auth {
     pub(crate) data: AuthData,
+}
+
+impl<S> FromRequestParts<S> for Auth
+where
+    S: Send + Sync,
+{
+    type Rejection = ();
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        parts.extensions.get::<Auth>()
+            .cloned()
+            .ok_or(())
+    }
 }
 
 impl Auth {
@@ -69,7 +86,6 @@ pub(crate) struct ApiKeyData {
     pub(crate) authenticate_api_key_response: AuthenticateApiKeyResponse,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
     pub iss: String,
@@ -106,7 +122,6 @@ pub struct AccessTokenUser {
     #[serde(rename = "profilePictureUrl")]
     pub profile_picture_url: Option<String>,
 }
-
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessTokenImpersonator {

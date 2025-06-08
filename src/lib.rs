@@ -7,7 +7,7 @@ use std::task::{Context, Poll};
 use tokio::sync::Mutex;
 use tower::{Layer, Service};
 
-mod auth;
+pub mod auth;
 pub mod authenticator;
 
 pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {

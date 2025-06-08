@@ -1,15 +1,13 @@
 use crate::auth::{AccessTokenClaims, AccessTokenData, Auth, AuthData};
+use anyhow::Context;
 use aws_lc_rs::signature::UnparsedPublicKey;
 use aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED;
-use axum::body::Body;
-use axum::extract::Request;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
+use reqwest::header::HeaderMap;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::time::Duration;
-use anyhow::Context;
-use reqwest::header::HeaderMap;
+use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use tokio::time::Instant;
 
@@ -48,7 +46,9 @@ impl Authenticator {
         &mut self,
         request_headers: &HeaderMap,
     ) -> Result<Auth, AuthenticateError> {
-        self.fetch_config().await.context("Failed to fetch config")?;
+        self.fetch_config()
+            .await
+            .context("Failed to fetch config")?;
 
         let project_id = &self.config.as_ref().unwrap().project_id;
         let keys = &self.config.as_ref().unwrap().keys;
@@ -57,8 +57,15 @@ impl Authenticator {
         let credentials = Self::extract_credentials(&request_headers, project_id)
             .ok_or(AuthenticateError::Unauthorized)?;
         dbg!(&credentials);
-        let access_token_claims = authenticate_access_token(keys, Instant::now(), &credentials)
-            .ok_or(AuthenticateError::Unauthorized)?;
+
+        let now_unix_seconds = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let access_token_claims =
+            authenticate_access_token(keys, now_unix_seconds as i64, &credentials)
+                .ok_or(AuthenticateError::Unauthorized)?;
         dbg!(&access_token_claims);
         Ok(Auth {
             data: AuthData::AccessToken(AccessTokenData {
@@ -155,7 +162,7 @@ impl Authenticator {
 
 fn authenticate_access_token(
     keys: &HashMap<String, UnparsedPublicKey<Vec<u8>>>,
-    now: Instant,
+    now_unix_seconds: i64,
     access_token: &str,
 ) -> Option<AccessTokenClaims> {
     // Split the JWT token into its three parts: header, payload, signature
@@ -185,7 +192,10 @@ fn authenticate_access_token(
     let signature = BASE64_URL_SAFE_NO_PAD.decode(signature_b64).ok()?;
 
     // Verify the signature
-    if public_key.verify(signed_data.as_bytes(), &signature).is_err() {
+    if public_key
+        .verify(signed_data.as_bytes(), &signature)
+        .is_err()
+    {
         return None;
     }
 
@@ -193,14 +203,7 @@ fn authenticate_access_token(
     let payload_bytes = BASE64_URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
     let claims: AccessTokenClaims = serde_json::from_slice(&payload_bytes).ok()?;
 
-    // Check if the token is expired
-    // Convert the current time to seconds since UNIX epoch
-    let current_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs() as i64;
-
-    if claims.exp < current_time || claims.nbf > current_time {
+    if claims.exp < now_unix_seconds || claims.nbf > now_unix_seconds {
         return None;
     }
 

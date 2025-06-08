@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use tesseral_axum::authenticator::Authenticator;
 use tesseral_axum::require_auth;
 use tokio::net::TcpListener;
+use tesseral_axum::auth::Auth;
 
 #[tokio::main]
 async fn main() {
@@ -21,6 +22,10 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn handler() -> String {
+async fn handler(auth: Auth) -> String {
+    dbg!(auth.credentials());
+    dbg!(auth.access_token_claims());
+    dbg!(auth.organization_id());
+    dbg!(auth.has_permission("foo.bar.baz"));
     "Hello, World!".to_owned()
 }
