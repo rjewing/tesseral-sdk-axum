@@ -1,24 +1,9 @@
-use axum::extract::{FromRequest, FromRequestParts};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 
-/// Represents an authenticated user or API key.
-///
-/// This struct is extracted from request extensions and provides methods to access
-/// authentication information such as organization ID, access token claims, credentials,
-/// and permissions.
-///
-/// # Example
-///
-/// ```
-/// async fn handler(auth: Auth) -> String {
-///     let org_id = auth.organization_id();
-///     let has_permission = auth.has_permission("foo.bar.baz");
-///     // ...
-/// }
-/// ```
+/// Represents an authenticated user or API key. Must be used with
+/// [`require_auth`](`crate::require_auth`).
 #[derive(Clone)]
 pub struct Auth {
     pub(crate) data: AuthData,
@@ -31,13 +16,19 @@ where
     type Rejection = ();
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<Auth>()
-            .cloned()
-            .ok_or(())
+        parts.extensions.get::<Auth>().cloned().ok_or(())
     }
 }
 
 impl Auth {
+    /// The type of credentials used to authenticate the request.
+    pub fn credentials_type(&self) -> CredentialsType {
+        match self.data {
+            AuthData::AccessToken(_) => CredentialsType::AccessToken,
+            AuthData::ApiKey(_) => CredentialsType::ApiKey,
+        }
+    }
+
     /// Returns the organization ID of the authenticated user or API key.
     ///
     /// This method works for both access token and API key authentication.
@@ -52,9 +43,9 @@ impl Auth {
         }
     }
 
-    /// Returns the access token claims if the authentication was done with an access token.
+    /// The claims inside the request's access token, if any.
     ///
-    /// Returns `None` if the authentication was done with an API key.
+    /// Returns `None` if the request was authenticated with an API key.
     pub fn access_token_claims(&self) -> Option<&AccessTokenClaims> {
         match self.data {
             AuthData::AccessToken(ref data) => Some(&data.access_token_claims),
@@ -62,9 +53,7 @@ impl Auth {
         }
     }
 
-    /// Returns the credentials used for authentication.
-    ///
-    /// This will be either the access token or the API key secret token.
+    /// Returns the request's original credentials.
     pub fn credentials(&self) -> &str {
         match self.data {
             AuthData::AccessToken(ref data) => &data.access_token,
@@ -72,15 +61,8 @@ impl Auth {
         }
     }
 
-    /// Checks if the authenticated user or API key has the specified permission.
-    ///
-    /// # Arguments
-    ///
-    /// * `action` - The permission to check for, e.g., "foo.bar.baz"
-    ///
-    /// # Returns
-    ///
-    /// `true` if the user or API key has the specified permission, `false` otherwise.
+    /// Returns whether the requester has permission to carry out the given
+    /// action.
     pub fn has_permission(&self, action: &str) -> bool {
         match self.data {
             AuthData::AccessToken(ref data) => data
@@ -99,6 +81,15 @@ impl Auth {
                 .any(|a| a == action),
         }
     }
+}
+
+/// Returned from [`Auth::credentials_type`].
+pub enum CredentialsType {
+    /// The request was authenticated with an access token.
+    AccessToken,
+
+    /// The request was authenticated with an API key.
+    ApiKey,
 }
 
 #[derive(Clone)]

@@ -15,26 +15,9 @@ use std::env;
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use tokio::time::Instant;
-use tracing_subscriber::fmt::format;
 
-/// Authenticator for validating Tesseral access tokens and API keys.
-///
-/// This struct is responsible for authenticating requests using Tesseral's authentication
-/// system. It can validate both access tokens (JWTs) and API keys.
-///
-/// # Example
-///
-/// ```
-/// let authenticator = Authenticator::new("publishable_key_en43cawcravxk7t2murwiz192")
-///     .with_config_api_hostname("config.tesseral.com")
-///     .with_api_keys_enabled(true)
-///     .with_backend_api_key("tesseral_secret_key_68ds2bw8gk5l4dpfwklwgmby2");
-///
-/// // Use with require_auth middleware
-/// let app = Router::new()
-///     .route("/", get(handler))
-///     .layer(require_auth(authenticator));
-/// ```
+/// Authenticates access tokens and API keys. Must be used with
+/// [`require_auth`](`crate::require_auth`).
 pub struct Authenticator {
     publishable_key: String,
     config_api_hostname: String,
@@ -52,23 +35,11 @@ struct Config {
     next_refresh: Instant,
 }
 
-/// Errors that can occur during authentication.
-///
-/// This enum represents the different types of errors that can occur when
-/// authenticating a request.
 #[derive(Debug, Error)]
-pub enum AuthenticateError {
-    /// The request is unauthorized.
-    ///
-    /// This error occurs when the credentials provided in the request are invalid
-    /// or missing.
+pub(crate) enum AuthenticateError {
     #[error("Unauthorized")]
     Unauthorized,
 
-    /// An internal error occurred during authentication.
-    ///
-    /// This error occurs when there's a problem with the authentication process
-    /// itself, such as a network error or an invalid response from the Tesseral API.
     #[error("Internal error: {0}")]
     Other(#[from] anyhow::Error),
 }
@@ -86,13 +57,7 @@ struct JwtHeader {
 impl Authenticator {
     /// Creates a new Authenticator with the given publishable key.
     ///
-    /// # Arguments
-    ///
-    /// * `publishable_key` - The Tesseral publishable key for your project
-    ///
-    /// # Returns
-    ///
-    /// A new Authenticator instance with default settings.
+    /// Publishable keys start with `publishable_key_...`.
     pub fn new(publishable_key: String) -> Self {
         Self {
             publishable_key,
@@ -114,62 +79,34 @@ impl Authenticator {
 
     /// Sets the hostname for the Tesseral config API.
     ///
-    /// # Arguments
-    ///
-    /// * `config_api_hostname` - The hostname for the Tesseral config API
-    ///
-    /// # Returns
-    ///
-    /// The Authenticator instance with the updated config API hostname.
+    /// The default is `config.tesseral.com`.
     pub fn with_config_api_hostname(mut self, config_api_hostname: String) -> Self {
         self.config_api_hostname = config_api_hostname;
         self
     }
 
-    /// Sets the refresh interval for fetching configuration from the Tesseral API.
+    /// Sets how often to update the cache of public keys access tokens may be
+    /// signed with.
     ///
-    /// # Arguments
-    ///
-    /// * `config_refresh_interval` - The duration between config refreshes
-    ///
-    /// # Returns
-    ///
-    /// The Authenticator instance with the updated config refresh interval.
+    /// The default is 3600 seconds (1 hour).
     pub fn with_config_refresh_interval(mut self, config_refresh_interval: Duration) -> Self {
         self.config_refresh_interval = config_refresh_interval;
         self
     }
 
-    /// Enables or disables API key authentication.
+    /// Sets whether to accept API keys.
     ///
-    /// When enabled, the authenticator will validate API keys in addition to access tokens.
-    /// If enabled, you must also provide a backend API key using `with_backend_api_key`
-    /// or by setting the `TESSERAL_BACKEND_API_KEY` environment variable.
-    ///
-    /// # Arguments
-    ///
-    /// * `api_keys_enabled` - Whether API key authentication should be enabled
-    ///
-    /// # Returns
-    ///
-    /// The Authenticator instance with the updated API keys setting.
+    /// The default is `false`.
     pub fn with_api_keys_enabled(mut self, api_keys_enabled: bool) -> Self {
         self.api_keys_enabled = api_keys_enabled;
         self
     }
 
-    /// Sets the backend API key for authenticating API key requests.
+    /// Sets the Backend API Key to use when authenticating API keys.
     ///
-    /// This key is used to authenticate requests to the Tesseral API when validating API keys.
-    /// Required if `with_api_keys_enabled(true)` is used.
-    ///
-    /// # Arguments
-    ///
-    /// * `backend_api_key` - The Tesseral backend API key
-    ///
-    /// # Returns
-    ///
-    /// The Authenticator instance with the updated backend API key.
+    /// The default is populated from the `TESSERAL_BACKEND_API_KEY` environment
+    /// variable. If [`with_api_keys_enabled`] is set to `true`, then a Backend
+    /// API Key is required.
     pub fn with_backend_api_key(mut self, backend_api_key: String) -> Self {
         self.backend_api_key = Some(backend_api_key);
         self
