@@ -10,7 +10,7 @@
 //!
 //! let authenticator = Authenticator::new("publishable_key_...".into());
 //!
-//! let app = Router::new()
+//! let app: Router = Router::new()
 //!     .route("/", get(handler))
 //!     .layer(require_auth(authenticator));
 //!
