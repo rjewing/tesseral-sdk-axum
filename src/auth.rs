@@ -111,7 +111,7 @@ pub(crate) struct ApiKeyData {
     pub(crate) authenticate_api_key_response: AuthenticateApiKeyResponse,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
     pub iss: String,
     pub sub: String,
@@ -126,19 +126,19 @@ pub struct AccessTokenClaims {
     pub impersonator: Option<AccessTokenImpersonator>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenSession {
     pub id: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenOrganization {
     pub id: String,
     #[serde(rename = "displayName")]
     pub display_name: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenUser {
     pub id: String,
     pub email: String,
@@ -148,7 +148,7 @@ pub struct AccessTokenUser {
     pub profile_picture_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenImpersonator {
     pub email: String,
 }

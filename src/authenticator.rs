@@ -187,22 +187,6 @@ impl Authenticator {
             }
         }
 
-        #[derive(Deserialize)]
-        struct ConfigResponse {
-            #[serde(rename = "projectId")]
-            project_id: String,
-            keys: Vec<Jwk>,
-        }
-
-        #[derive(Deserialize)]
-        struct Jwk {
-            kid: String,
-            kty: String,
-            crv: String,
-            x: String,
-            y: String,
-        }
-
         let config_response: ConfigResponse = self
             .http_client
             .get(format!(
@@ -215,28 +199,11 @@ impl Authenticator {
             .json()
             .await?;
 
-        let mut keys = HashMap::new();
-        for jwk in config_response.keys {
-            if jwk.kty != "EC" || jwk.crv != "P-256" {
-                anyhow::bail!("Unsupported key type/curve: {}/{}", jwk.kty, jwk.crv);
-            }
-
-            let x = BASE64_URL_SAFE_NO_PAD.decode(jwk.x)?;
-            let y = BASE64_URL_SAFE_NO_PAD.decode(jwk.y)?;
-            let mut buf = Vec::with_capacity(1 + x.len() + y.len());
-            buf.push(0x04);
-            buf.extend(&x);
-            buf.extend(&y);
-
-            keys.insert(
-                jwk.kid,
-                UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, buf),
-            );
-        }
+        let (project_id, keys) = parse_config(config_response)?;
 
         self.config = Some(Config {
             next_refresh: Instant::now() + self.config_refresh_interval,
-            project_id: config_response.project_id,
+            project_id,
             keys,
         });
         Ok(())
@@ -302,6 +269,46 @@ impl Authenticator {
     }
 }
 
+#[derive(Deserialize)]
+struct ConfigResponse {
+    #[serde(rename = "projectId")]
+    project_id: String,
+    keys: Vec<Jwk>,
+}
+
+#[derive(Deserialize)]
+struct Jwk {
+    kid: String,
+    kty: String,
+    crv: String,
+    x: String,
+    y: String,
+}
+
+// Parse the configuration from a ConfigResponse
+fn parse_config(config_response: ConfigResponse) -> Result<(String, HashMap<String, UnparsedPublicKey<Vec<u8>>>), anyhow::Error> {
+    let mut keys = HashMap::new();
+
+    for jwk in &config_response.keys {
+        if jwk.kty != "EC" || jwk.crv != "P-256" {
+            continue;
+        }
+
+        let x_bytes = BASE64_URL_SAFE_NO_PAD.decode(&jwk.x)?;
+        let y_bytes = BASE64_URL_SAFE_NO_PAD.decode(&jwk.y)?;
+
+        let mut public_key_bytes = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
+        public_key_bytes.push(4); // Uncompressed point format
+        public_key_bytes.extend_from_slice(&x_bytes);
+        public_key_bytes.extend_from_slice(&y_bytes);
+
+        let public_key = UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, public_key_bytes);
+        keys.insert(jwk.kid.clone(), public_key);
+    }
+
+    Ok((config_response.project_id, keys))
+}
+
 fn authenticate_access_token(
     keys: &HashMap<String, UnparsedPublicKey<Vec<u8>>>,
     now_unix_seconds: i64,
@@ -350,4 +357,40 @@ fn authenticate_access_token(
     }
 
     Some(claims)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Deserialize)]
+    struct TestCase {
+        name: String,
+        jwks: String,
+        #[serde(rename = "accessToken")]
+        access_token: String,
+        #[serde(rename = "nowUnixSeconds")]
+        now_unix_seconds: i64,
+        claims: Option<AccessTokenClaims>,
+    }
+
+    const TEST_CASES: &str = include_str!("authenticate_access_token_tests.json");
+
+    #[test]
+    fn test_authenticate_access_token() {
+        let test_cases: Vec<TestCase> = serde_json::from_str(TEST_CASES).unwrap();
+
+        for test_case in test_cases {
+            let jwks: ConfigResponse = serde_json::from_str(&test_case.jwks).unwrap();
+            let (_, keys) = parse_config(jwks).unwrap();
+
+            let access_token_claims = authenticate_access_token(
+                &keys,
+                test_case.now_unix_seconds,
+                &test_case.access_token,
+            );
+
+            assert_eq!(access_token_claims, test_case.claims, "{}", test_case.name);
+        }
+    }
 }
