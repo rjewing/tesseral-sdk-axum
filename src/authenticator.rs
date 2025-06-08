@@ -1,21 +1,30 @@
-use crate::auth::{AccessTokenClaims, AccessTokenData, Auth, AuthData};
+use crate::auth::{
+    AccessTokenClaims, AccessTokenData, ApiKeyData, Auth, AuthData, AuthenticateApiKeyRequest,
+    AuthenticateApiKeyResponse,
+};
+use crate::credentials::{is_api_key_format, is_jwt_format};
 use anyhow::Context;
 use aws_lc_rs::signature::UnparsedPublicKey;
 use aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use reqwest::header::HeaderMap;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use tokio::time::Instant;
+use tracing_subscriber::fmt::format;
 
 pub struct Authenticator {
     publishable_key: String,
     config_api_hostname: String,
     config_refresh_interval: Duration,
     config: Option<Config>,
+    api_keys_enabled: bool,
+    backend_api_key: Option<String>,
+    backend_api_hostname: String,
     http_client: reqwest::Client,
 }
 
@@ -33,6 +42,16 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct AuthenticateApiKeyErrorResponse {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JwtHeader {
+    kid: String,
+}
+
 impl Authenticator {
     pub fn new(publishable_key: String) -> Self {
         Self {
@@ -40,7 +59,16 @@ impl Authenticator {
             config_api_hostname: "config.tesseral.com".to_owned(),
             config_refresh_interval: Duration::from_secs(60 * 60),
             config: None,
+            api_keys_enabled: false,
+            backend_api_key: env::var("TESSERAL_BACKEND_API_KEY").ok(),
+            backend_api_hostname: "api.tesseral.com".to_owned(),
             http_client: reqwest::Client::new(),
+        }
+    }
+
+    pub(crate) fn validate_backend_api_key(&self) {
+        if self.api_keys_enabled && self.backend_api_key.is_none() {
+            panic!("If you use authenticator.with_api_keys_enabled(true), then you must use authenticator.with_backend_api_key(...) or set a TESSERAL_BACKEND_API_KEY environment variable.")
         }
     }
 
@@ -51,6 +79,16 @@ impl Authenticator {
 
     pub fn with_config_refresh_interval(mut self, config_refresh_interval: Duration) -> Self {
         self.config_refresh_interval = config_refresh_interval;
+        self
+    }
+
+    pub fn with_api_keys_enabled(mut self, api_keys_enabled: bool) -> Self {
+        self.api_keys_enabled = api_keys_enabled;
+        self
+    }
+
+    pub fn with_backend_api_key(mut self, backend_api_key: String) -> Self {
+        self.backend_api_key = Some(backend_api_key);
         self
     }
 
@@ -65,26 +103,39 @@ impl Authenticator {
         let project_id = &self.config.as_ref().unwrap().project_id;
         let keys = &self.config.as_ref().unwrap().keys;
 
-        dbg!(project_id, keys);
         let credentials = Self::extract_credentials(&request_headers, project_id)
             .ok_or(AuthenticateError::Unauthorized)?;
-        dbg!(&credentials);
 
-        let now_unix_seconds = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        if is_jwt_format(&credentials) {
+            let now_unix_seconds = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
 
-        let access_token_claims =
-            authenticate_access_token(keys, now_unix_seconds as i64, &credentials)
-                .ok_or(AuthenticateError::Unauthorized)?;
-        dbg!(&access_token_claims);
-        Ok(Auth {
-            data: AuthData::AccessToken(AccessTokenData {
-                access_token: credentials,
-                access_token_claims,
-            }),
-        })
+            let access_token_claims =
+                authenticate_access_token(keys, now_unix_seconds as i64, &credentials)
+                    .ok_or(AuthenticateError::Unauthorized)?;
+            dbg!(&access_token_claims);
+            return Ok(Auth {
+                data: AuthData::AccessToken(AccessTokenData {
+                    access_token: credentials,
+                    access_token_claims,
+                }),
+            });
+        }
+
+        if self.api_keys_enabled && is_api_key_format(&credentials) {
+            let authenticate_api_key_response = self.authenticate_api_key(&credentials).await?;
+
+            return Ok(Auth {
+                data: AuthData::ApiKey(ApiKeyData {
+                    api_key_secret_token: credentials,
+                    authenticate_api_key_response,
+                }),
+            });
+        }
+
+        Err(AuthenticateError::Unauthorized)
     }
 
     fn extract_credentials(request_headers: &HeaderMap, project_id: &str) -> Option<String> {
@@ -135,8 +186,8 @@ impl Authenticator {
         let config_response: ConfigResponse = self
             .http_client
             .get(format!(
-                "https://config.tesseral.com/v1/config/{}",
-                self.publishable_key
+                "https://{}/v1/config/{}",
+                self.config_api_hostname, self.publishable_key
             ))
             .send()
             .await?
@@ -170,6 +221,65 @@ impl Authenticator {
         });
         Ok(())
     }
+
+    async fn authenticate_api_key(
+        &self,
+        api_key_secret_token: &str,
+    ) -> Result<AuthenticateApiKeyResponse, AuthenticateError> {
+        let response = self
+            .http_client
+            .post(format!(
+                "https://{}/v1/api-keys/authenticate",
+                self.backend_api_hostname
+            ))
+            .bearer_auth(self.backend_api_key.clone().unwrap())
+            .json(&AuthenticateApiKeyRequest {
+                secret_token: Some(api_key_secret_token.to_owned()),
+            })
+            .send()
+            .await
+            .map_err(|e| AuthenticateError::Other(e.into()))?;
+
+        // Handle HTTP status errors
+        if let Err(err) = response.error_for_status_ref() {
+            // If it's a 400 status, check if it's an "unauthenticated_api_key" error
+            if err.status() == Some(reqwest::StatusCode::BAD_REQUEST) {
+                // Get the response body
+                let response_body = response
+                    .text()
+                    .await
+                    .map_err(|e| AuthenticateError::Other(e.into()))?;
+
+                // Try to parse the error response body
+                if let Ok(error_response) =
+                    serde_json::from_str::<AuthenticateApiKeyErrorResponse>(&response_body)
+                {
+                    // Check if the error message matches what we expect
+                    if error_response.message == "unauthenticated_api_key" {
+                        return Err(AuthenticateError::Unauthorized);
+                    }
+                }
+                // If we couldn't parse the response or the message didn't match, treat as Other error
+                return Err(AuthenticateError::Other(anyhow::anyhow!(
+                    "Bad request: {}",
+                    response_body
+                )));
+            } else {
+                // For other status codes, return Other error
+                return Err(AuthenticateError::Other(err.into()));
+            }
+        }
+
+        let response = response;
+
+        // Parse the JSON response
+        let res: AuthenticateApiKeyResponse = response
+            .json()
+            .await
+            .map_err(|e| AuthenticateError::Other(e.into()))?;
+
+        Ok(res)
+    }
 }
 
 fn authenticate_access_token(
@@ -189,10 +299,10 @@ fn authenticate_access_token(
 
     // Decode the header
     let header_bytes = BASE64_URL_SAFE_NO_PAD.decode(header_b64).ok()?;
-    let header: serde_json::Value = serde_json::from_slice(&header_bytes).ok()?;
+    let header: JwtHeader = serde_json::from_slice(&header_bytes).ok()?;
 
     // Extract the key ID (kid) from the header
-    let kid = header["kid"].as_str()?;
+    let kid = &header.kid;
 
     // Find the corresponding public key
     let public_key = keys.get(kid)?;

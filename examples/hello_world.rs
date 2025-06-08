@@ -8,7 +8,9 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() {
     let authenticator = Authenticator::new("publishable_key_en43cawcravxk7t2murwiz192".to_string())
-        .with_config_api_hostname("config.tesseral.com".to_string());
+        .with_config_api_hostname("config.tesseral.com".to_string())
+        .with_api_keys_enabled(true)
+        .with_backend_api_key("tesseral_secret_key_68ds2bw8gk5l4dpfwklwgmby2".to_string());
 
     // Build our application with a single route
     let app = Router::new()

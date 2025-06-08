@@ -9,8 +9,10 @@ use tower::{Layer, Service};
 
 pub mod auth;
 pub mod authenticator;
+mod credentials;
 
 pub fn require_auth(authenticator: Authenticator) -> RequireAuthLayer {
+    authenticator.validate_backend_api_key();
     RequireAuthLayer {
         authenticator: Arc::new(Mutex::new(authenticator)),
     }
