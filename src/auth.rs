@@ -111,45 +111,72 @@ pub(crate) struct ApiKeyData {
     pub(crate) authenticate_api_key_response: AuthenticateApiKeyResponse,
 }
 
+/// The claims encoded in an Access Token.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
+    /// Will always be of the form "https://project-xxx.tesseral.app", where
+    /// "project-xxx" is your Project ID.
     pub iss: String,
+    /// Will always be equal to the `user.id` claim.
     pub sub: String,
+    /// Will always be equal to the `iss` claim.
     pub aud: String,
+    /// When this Access Token expires, in seconds since the unix epoch.
     pub exp: i64,
+    /// When this Access Token was issued, in seconds since the unix epoch.
     pub nbf: i64,
+    /// Will always be equal to the `nbf` claim.
     pub iat: i64,
+    /// The set of actions the User has permission to carry out.
     pub actions: Option<Vec<String>>,
+    /// The Organization the User is logged into.
     pub organization: AccessTokenOrganization,
+    /// The User that's logged in.
     pub user: AccessTokenUser,
+    /// The user's current Session.
     pub session: AccessTokenSession,
+    /// If this is an impersonated Session, this contains information about who on
+    /// your staff is impersonating the user.
     pub impersonator: Option<AccessTokenImpersonator>,
 }
 
+/// Information in an Access Token about the current Session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenSession {
+    /// The Session ID.
     pub id: String,
 }
 
+/// Information in an Access Token about the Organization the User is logged
+/// into.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenOrganization {
+    /// The Organization's ID.
     pub id: String,
+    /// The Organization's display name.
     #[serde(rename = "displayName")]
     pub display_name: String,
 }
 
+/// Information in an Access Token about the logged-in User.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenUser {
+    /// The User's ID.
     pub id: String,
+    /// The User's email.
     pub email: String,
+    /// The User's full name.
     #[serde(rename = "displayName")]
     pub display_name: Option<String>,
+    /// A URL of the User's profile picture.
     #[serde(rename = "profilePictureUrl")]
     pub profile_picture_url: Option<String>,
 }
 
+/// Information in an Access Token about who is impersonating the User.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenImpersonator {
+    /// The email address of the individual on your staff impersonating the User.
     pub email: String,
 }
 
