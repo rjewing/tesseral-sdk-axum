@@ -2,6 +2,9 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "test-utils")]
+use std::time::{Duration, Instant};
+
 /// Represents an authenticated user or API key. Must be used with
 /// [`require_auth`](`crate::require_auth`).
 #[derive(Clone)]
@@ -80,6 +83,49 @@ impl Auth {
                 .iter()
                 .any(|a| a == action),
         }
+    }
+}
+
+#[cfg(feature = "test-utils")]
+impl Auth {
+    /// Returns a mock access token for use in tests with custom access token claims.
+    pub fn test_access_token_with_claims(access_token_claims: AccessTokenClaims) -> Self {
+        Self {
+            data: AuthData::AccessToken(AccessTokenData {
+                // JWT header uses mock data: {"kid":"session_signing_key_example1234567890abcdefgh","alg":"ES256"}
+                access_token: "eyJraWQiOiJzZXNzaW9uX3NpZ25pbmdfa2V5X2V4YW1wbGUxMjM0NTY3ODkwYWJjZGVmZ2giLCJhbGciOiJFUzI1NiJ9Cg.example.token".to_string(),
+                access_token_claims,
+            })
+        }
+    }
+
+    /// Returns a mock access token for use in tests.
+    pub fn test_access_token() -> Self {
+        Self::test_access_token_with_claims(AccessTokenClaims {
+            iss: "https://project-example1234567890abcdefgh.tesseral.app".to_string(),
+            sub: "user_1234567890abcdefghijklmno".to_string(),
+            aud: "https://project-example1234567890abcdefgh.tesseral.app".to_string(),
+            exp: (Instant::now() + Duration::from_secs(5 * 60))
+                .elapsed()
+                .as_secs() as i64,
+            nbf: Instant::now().elapsed().as_secs() as i64,
+            iat: Instant::now().elapsed().as_secs() as i64,
+            session: AccessTokenSession {
+                id: "session_example1234567890abcdefgh".to_string(),
+            },
+            user: AccessTokenUser {
+                id: "user_example1234567890abcdefgh".to_string(),
+                email: "user@example.com".to_string(),
+                display_name: Some("Example User".to_string()),
+                profile_picture_url: None,
+            },
+            organization: AccessTokenOrganization {
+                id: "org_example1234567890abcdefgh".to_string(),
+                display_name: "Acme".to_string(),
+            },
+            actions: None,
+            impersonator: None,
+        })
     }
 }
 

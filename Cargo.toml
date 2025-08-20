@@ -1,6 +1,6 @@
 [package]
 name = "tesseral-axum"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Tesseral SDK for Axum"
 license = "MIT"
@@ -23,3 +23,6 @@ regex = "1"
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
+
+[features]
+test-utils = []
