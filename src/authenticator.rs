@@ -168,11 +168,13 @@ impl Authenticator {
             }
         }
 
-        let cookie_name = format!("tesseral_{}_access_token", project_id);
-        for cookie in request_headers.get_all("Cookie") {
-            if let Ok(cookie) = cookie.to_str() {
-                if let Some(credentials) = cookie.strip_prefix(&cookie_name) {
-                    return Some(credentials.to_owned());
+        let cookie_name = format!("tesseral_{project_id}_access_token=");
+        for cookies in request_headers.get_all("Cookie") {
+            if let Ok(cookies) = cookies.to_str() {
+                for cookie in cookies.split(";") {
+                    if let Some(credentials) = cookie.trim().strip_prefix(&cookie_name) {
+                        return Some(credentials.to_owned());
+                    }
                 }
             }
         }
@@ -286,7 +288,9 @@ struct Jwk {
 }
 
 // Parse the configuration from a ConfigResponse
-fn parse_config(config_response: ConfigResponse) -> Result<(String, HashMap<String, UnparsedPublicKey<Vec<u8>>>), anyhow::Error> {
+fn parse_config(
+    config_response: ConfigResponse,
+) -> Result<(String, HashMap<String, UnparsedPublicKey<Vec<u8>>>), anyhow::Error> {
     let mut keys = HashMap::new();
 
     for jwk in &config_response.keys {
@@ -361,6 +365,8 @@ fn authenticate_access_token(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::HeaderValue;
+
     use super::*;
 
     #[derive(Debug, Deserialize)]
@@ -391,6 +397,31 @@ mod tests {
             );
 
             assert_eq!(access_token_claims, test_case.claims, "{}", test_case.name);
+        }
+    }
+
+    #[test]
+    fn test_extract_credentials_from_cookie() {
+        let test_cases: Vec<TestCase> = serde_json::from_str(TEST_CASES).unwrap();
+        for test_case in test_cases {
+            let jwks: ConfigResponse = serde_json::from_str(&test_case.jwks).unwrap();
+
+            let cookie_name = format!("tesseral_{}_access_token", jwks.project_id);
+            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cookie#syntax
+            let cookie_header_value = format!(
+                "other_cookie=some_value; {cookie_name}={}",
+                test_case.access_token
+            );
+            let mut request_headers = HeaderMap::new();
+            request_headers.append(
+                "Cookie",
+                HeaderValue::from_str(&cookie_header_value).unwrap(),
+            );
+
+            let credentials =
+                Authenticator::extract_credentials(&request_headers, &jwks.project_id);
+            assert!(credentials.is_some(), "{}", test_case.name);
+            assert_eq!(credentials.unwrap(), test_case.access_token, "{}", test_case.name);
         }
     }
 }
