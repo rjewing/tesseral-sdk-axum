@@ -28,7 +28,7 @@ use std::task::{Context, Poll};
 use tokio::sync::Mutex;
 use tower::{Layer, Service};
 
-mod auth;
+pub mod auth;
 mod authenticator;
 mod credentials;
 

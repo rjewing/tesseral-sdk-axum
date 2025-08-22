@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// [`require_auth`](`crate::require_auth`).
 #[derive(Clone)]
 pub struct Auth {
-    pub(crate) data: AuthData,
+    pub data: AuthData,
 }
 
 impl<S> FromRequestParts<S> for Auth
@@ -94,21 +94,21 @@ pub enum CredentialsType {
 }
 
 #[derive(Clone)]
-pub(crate) enum AuthData {
+pub enum AuthData {
     AccessToken(AccessTokenData),
     ApiKey(ApiKeyData),
 }
 
 #[derive(Clone)]
-pub(crate) struct AccessTokenData {
-    pub(crate) access_token: String,
-    pub(crate) access_token_claims: AccessTokenClaims,
+pub struct AccessTokenData {
+    pub access_token: String,
+    pub access_token_claims: AccessTokenClaims,
 }
 
 #[derive(Clone)]
-pub(crate) struct ApiKeyData {
-    pub(crate) api_key_secret_token: String,
-    pub(crate) authenticate_api_key_response: AuthenticateApiKeyResponse,
+pub struct ApiKeyData {
+    pub api_key_secret_token: String,
+    pub authenticate_api_key_response: AuthenticateApiKeyResponse,
 }
 
 /// The claims encoded in an Access Token.
@@ -181,13 +181,13 @@ pub struct AccessTokenImpersonator {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct AuthenticateApiKeyRequest {
+pub struct AuthenticateApiKeyRequest {
     #[serde(rename = "secretToken", skip_serializing_if = "Option::is_none")]
     pub secret_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct AuthenticateApiKeyResponse {
+pub struct AuthenticateApiKeyResponse {
     #[serde(rename = "apiKeyId", skip_serializing_if = "Option::is_none")]
     pub api_key_id: Option<String>,
     #[serde(rename = "organizationId", skip_serializing_if = "Option::is_none")]
