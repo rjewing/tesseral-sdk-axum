@@ -135,7 +135,6 @@ impl Authenticator {
             let access_token_claims =
                 authenticate_access_token(keys, now_unix_seconds as i64, &credentials)
                     .ok_or(AuthenticateError::Unauthorized)?;
-            dbg!(&access_token_claims);
             return Ok(Auth {
                 data: AuthData::AccessToken(AccessTokenData {
                     access_token: credentials,
